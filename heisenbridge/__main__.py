@@ -128,11 +128,19 @@ class BridgeAppService(AppService):
         duplicate Matrix re-post. Otherwise return False."""
         import time as _time
 
+        now = _time.monotonic()
+        # opportunistic GC of expired entries so the cache cannot grow
+        # unbounded under bursty-then-idle traffic.
+        cutoff = now - self.PUPPET_ECHO_TTL
+        stale = [k for k, t in self._recent_puppet_sends.items() if t < cutoff]
+        for k in stale:
+            self._recent_puppet_sends.pop(k, None)
+
         key = (network.lower(), channel.lower(), nick.lower(), body)
         ts = self._recent_puppet_sends.pop(key, None)
         if ts is None:
             return False
-        if _time.monotonic() - ts > self.PUPPET_ECHO_TTL:
+        if now - ts > self.PUPPET_ECHO_TTL:
             return False
         return True
 

@@ -673,6 +673,27 @@ class PrivateRoom(Room):
 
         (plain, formatted) = parse_irc_formatting(event.arguments[0])
 
+        # double-puppet attribution: in plumbed rooms with notice relay
+        # enabled, if the IRC sender's nick is claimed by a Matrix user via
+        # MATRIXTOKEN, post as that Matrix user (or suppress the echo of a
+        # message that originated from them via the puppet send path).
+        if getattr(self, "force_forward", False):
+            claim = self.serv.get_user_token(self.network.name, event.source.nick)
+            if claim is not None:
+                if self.serv.consume_puppet_echo(
+                    self.network.name, self.name, event.source.nick, event.arguments[0]
+                ):
+                    return
+                claim_user_id, claim_token = claim
+                content = {"msgtype": "m.notice", "body": plain}
+                if formatted:
+                    content["format"] = "org.matrix.custom.html"
+                    content["formatted_body"] = formatted
+                asyncio.ensure_future(
+                    self.serv.send_as_user(self.id, claim_user_id, claim_token, content)
+                )
+                return
+
         if event.source.nick == self.network.conn.real_nickname:
             self.send_notice(f"You noticed: {plain}", formatted=(f"You noticed: {formatted}" if formatted else None))
             return
@@ -709,6 +730,27 @@ class PrivateRoom(Room):
 
         if command == "ACTION" and len(event.arguments) > 1:
             (plain, formatted) = parse_irc_formatting(event.arguments[1])
+
+            # double-puppet attribution: in plumbed rooms, if the IRC sender's
+            # nick is claimed by a Matrix user via MATRIXTOKEN, post the emote
+            # as that Matrix user (or suppress the echo of a message that
+            # originated from them via the puppet send path).
+            if getattr(self, "force_forward", False):
+                claim = self.serv.get_user_token(self.network.name, event.source.nick)
+                if claim is not None:
+                    if self.serv.consume_puppet_echo(
+                        self.network.name, self.name, event.source.nick, event.arguments[1]
+                    ):
+                        return
+                    claim_user_id, claim_token = claim
+                    content = {"msgtype": "m.emote", "body": plain}
+                    if formatted:
+                        content["format"] = "org.matrix.custom.html"
+                        content["formatted_body"] = formatted
+                    asyncio.ensure_future(
+                        self.serv.send_as_user(self.id, claim_user_id, claim_token, content)
+                    )
+                    return
 
             if event.source.nick == self.network.conn.real_nickname:
                 self.send_emote(f"(you) {plain}")
