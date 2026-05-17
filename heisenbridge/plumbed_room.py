@@ -288,6 +288,17 @@ class PlumbedRoom(ChannelRoom):
         if "draft/relaymsg" in self.network.caps_enabled and event.content.msgtype != MessageType.NOTICE:
             func = send_relaymsg(self, func, sender)
             prefix = None
+        else:
+            # If the Matrix sender has claimed the bridge's own IRC nick via
+            # MATRIXTOKEN, the IRC line will already appear under their nick -
+            # don't double up by also prefixing the body with "<sender> ".
+            claimed_nick = self.serv.get_claimed_nick(self.network.name, event.sender)
+            if (
+                claimed_nick
+                and self.network.conn
+                and claimed_nick.lower() == self.network.conn.real_nickname.lower()
+            ):
+                prefix = None
 
         await self._send_message(event, func, prefix)
 
