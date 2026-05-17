@@ -1885,6 +1885,17 @@ class NetworkRoom(Room):
 
         # create a ChannelRoom in response to JOIN
         if event.source.nick == self.conn.real_nickname and target not in self.rooms:
+            # If this channel is plumbed bridge-wide, the PlumbedRoom is the
+            # canonical Matrix surface. Suppress per-user ChannelRoom creation
+            # to avoid duplicating the channel in the user's room list. The
+            # per-user IRC connection still receives PRIVMSG/JOIN/PART for the
+            # channel, which is what we want for double-puppet outbound sends.
+            if self.serv.is_channel_plumbed(self.name, event.target):
+                logging.debug(
+                    f"Skipping ChannelRoom creation for {event.target}: channel is plumbed on {self.name}"
+                )
+                return
+
             logging.debug("Pre-flight check for JOIN ok, going to create it...")
             self.rooms[target] = ChannelRoom.create(self, event.target)
 

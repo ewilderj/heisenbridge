@@ -84,6 +84,26 @@ class BridgeAppService(AppService):
     def get_user_token(self, network: str, nick: str) -> Optional[Tuple[str, str]]:
         return self._user_tokens.get((network.lower(), nick.lower()))
 
+    def is_channel_plumbed(self, network: str, channel: str) -> bool:
+        """Return True if any user on this bridge has plumbed `channel` on
+        `network`. Used to suppress per-user ChannelRoom creation/teardown for
+        channels that have a canonical PlumbedRoom surface."""
+        from heisenbridge.plumbed_room import PlumbedRoom
+
+        network_lc = network.lower()
+        channel_lc = channel.lower()
+        for room in self._rooms.values():
+            if (
+                type(room) is PlumbedRoom
+                and room.network
+                and room.network.name
+                and room.network.name.lower() == network_lc
+                and room.name
+                and room.name.lower() == channel_lc
+            ):
+                return True
+        return False
+
     def get_claimed_nick(self, network: str, user_id: str) -> Optional[str]:
         """Return the IRC nick that `user_id` has claimed on `network` via
         MATRIXTOKEN, or None if no claim is registered."""

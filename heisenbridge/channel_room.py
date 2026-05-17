@@ -231,7 +231,11 @@ class ChannelRoom(PrivateRoom):
     def cleanup(self) -> None:
         if self.network:
             if self.network.conn and self.network.conn.connected:
-                self.network.conn.part(self.name)
+                # Don't PART the IRC channel if it is plumbed bridge-wide:
+                # the per-user IRC connection must remain joined so that
+                # double-puppet outbound sends from this user keep working.
+                if not self.serv.is_channel_plumbed(self.network.name, self.name):
+                    self.network.conn.part(self.name)
 
         super().cleanup()
 
