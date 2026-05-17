@@ -64,6 +64,7 @@ class BridgeAppService(AppService):
     _rooms: Dict[str, Room]
     _users: Dict[str, str]
     _user_tokens: Dict[Tuple[str, str], Tuple[str, str]]
+    _user_apis: Dict[str, "HTTPAPI"]
 
     DEFAULT_MEDIA_PATH = "/_heisenbridge/media/{server}/{media_id}/{checksum}{filename}"
 
@@ -101,7 +102,10 @@ class BridgeAppService(AppService):
 
         content = {**content, self.SYNTHETIC_KEY: True}
         txn_id = f"hbdp{int(_time.time() * 1000)}{_random.randint(0, 999999):06d}"
-        api = HTTPAPI(base_url=self.az.intent.api.base_url, token=token)
+        api = self._user_apis.get(token)
+        if api is None:
+            api = HTTPAPI(base_url=self.az.intent.api.base_url, token=token)
+            self._user_apis[token] = api
         try:
             await api.request(
                 Method.PUT,
@@ -676,6 +680,7 @@ class BridgeAppService(AppService):
         self._rooms = {}
         self._users = {}
         self._user_tokens = {}
+        self._user_apis = {}
         self.config = {
             "networks": {},
             "owner": None,
