@@ -284,25 +284,55 @@ class PlumbedRoom(ChannelRoom):
     async def relay_message(self, event, func, sender):
         prefix = f"{sender} " if str(event.content.msgtype) == "m.emote" else f"<{sender}> "
 
-        # If the Matrix sender has claimed the bridge's own IRC nick via
-        # MATRIXTOKEN, the IRC line will appear under that nick directly -
-        # don't wrap in RELAYMSG and don't prefix the body with "<sender> ".
+        # Double-puppet attribution. If the Matrix sender has claimed an IRC
+        # nick via MATRIXTOKEN on this network, route the IRC message through
+        # the IRC connection that owns that nick so it appears as a native
+        # message from that nick (no "<sender>" prefix, no RELAYMSG wrap).
+        #
+        # Two cases:
+        #  (a) the plumber sent the message: the plumbed room's own
+        #      `self.network.conn` is the right connection.
+        #  (b) any other Matrix user sent the message: locate that user's own
+        #      NetworkRoom on the same network, which has its own per-user IRC
+        #      connection (with Ergo multiclient, this can coexist with the
+        #      user's native IRC client on the same nick).
         claimed_nick = self.serv.get_claimed_nick(self.network.name, event.sender)
-        sender_owns_bridge_nick = (
-            claimed_nick
-            and self.network.conn
-            and claimed_nick.lower() == self.network.conn.real_nickname.lower()
-        )
+        sender_conn = None
+        if claimed_nick:
+            # case (a)
+            if (
+                self.network.conn
+                and self.network.user_id == event.sender
+                and claimed_nick.lower() == self.network.conn.real_nickname.lower()
+            ):
+                sender_conn = self.network.conn
+            else:
+                # case (b): find sender's own NetworkRoom for the same network
+                from heisenbridge.network_room import NetworkRoom
 
-        # if we have relaymsg cap and it's not a notice, add more abstraction
-        if (
+                for room in self.serv.find_rooms(NetworkRoom, event.sender):
+                    if (
+                        room.name
+                        and room.name.lower() == self.network.name.lower()
+                        and room.conn
+                        and room.conn.real_nickname
+                        and room.conn.real_nickname.lower() == claimed_nick.lower()
+                    ):
+                        sender_conn = room.conn
+                        break
+
+        if sender_conn is not None:
+            # Swap func to use the sender's own IRC connection. The bound
+            # method names match across IRC connections (privmsg/action/notice).
+            method_name = func.__name__
+            func = getattr(sender_conn, method_name)
+            prefix = None
+        elif (
             "draft/relaymsg" in self.network.caps_enabled
             and event.content.msgtype != MessageType.NOTICE
-            and not sender_owns_bridge_nick
         ):
+            # if we have relaymsg cap and it's not a notice, add more abstraction
             func = send_relaymsg(self, func, sender)
-            prefix = None
-        elif sender_owns_bridge_nick:
             prefix = None
 
         await self._send_message(event, func, prefix)
