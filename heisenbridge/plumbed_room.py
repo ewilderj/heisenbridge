@@ -229,8 +229,17 @@ class PlumbedRoom(ChannelRoom):
 
             # ensure displayname is unique
             if self.use_disambiguation:
+                # if the sender has claimed an IRC nick via MATRIXTOKEN, treat
+                # the corresponding IRC puppet as the same user and exclude it
+                # from displayname collision detection.
+                claimed_nick = self.serv.get_claimed_nick(self.network.name, event.sender)
+                claimed_puppet = (
+                    self.serv.irc_user_id(self.network.name, claimed_nick) if claimed_nick else None
+                )
                 for user_id, displayname in self.displaynames.items():
-                    if user_id != event.sender and displayname == sender_displayname:
+                    if user_id == event.sender or user_id == claimed_puppet:
+                        continue
+                    if displayname == sender_displayname:
                         sender_displayname += f" ({sender})"
                         break
 

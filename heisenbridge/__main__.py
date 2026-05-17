@@ -83,6 +83,15 @@ class BridgeAppService(AppService):
     def get_user_token(self, network: str, nick: str) -> Optional[Tuple[str, str]]:
         return self._user_tokens.get((network.lower(), nick.lower()))
 
+    def get_claimed_nick(self, network: str, user_id: str) -> Optional[str]:
+        """Return the IRC nick that `user_id` has claimed on `network` via
+        MATRIXTOKEN, or None if no claim is registered."""
+        network_lc = network.lower()
+        for (net, nick), (mxid, _tok) in self._user_tokens.items():
+            if net == network_lc and mxid == user_id:
+                return nick
+        return None
+
     async def send_as_user(self, room_id: str, user_id: str, token: str, content: dict) -> None:
         """Send a Matrix message event to `room_id` as `user_id` using their
         access token. The content is augmented with SYNTHETIC_KEY so the bridge
