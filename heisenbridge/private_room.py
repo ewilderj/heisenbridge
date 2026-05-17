@@ -608,6 +608,14 @@ class PrivateRoom(Room):
             claim = self.serv.get_user_token(self.network.name, event.source.nick)
             if claim is not None:
                 claim_user_id, claim_token = claim
+                # Suppress the echo of a message that originated from this
+                # same Matrix user via the puppet send path. The original
+                # Matrix event is already in the room; re-posting would
+                # produce a duplicate.
+                if self.serv.consume_puppet_echo(
+                    self.network.name, self.name, event.source.nick, event.arguments[0]
+                ):
+                    return
                 content = {"msgtype": "m.text", "body": plain}
                 if formatted:
                     content["format"] = "org.matrix.custom.html"

@@ -325,7 +325,22 @@ class PlumbedRoom(ChannelRoom):
             # Swap func to use the sender's own IRC connection. The bound
             # method names match across IRC connections (privmsg/action/notice).
             method_name = func.__name__
-            func = getattr(sender_conn, method_name)
+            underlying = getattr(sender_conn, method_name)
+            sender_nick = sender_conn.real_nickname
+            channel_name = self.name
+            serv = self.serv
+            network_name = self.network.name
+
+            def _recording_send(target, body, *args, **kwargs):
+                # Record so the plumbed-room conn can ignore the IRC echo
+                # of this message and avoid double-posting to Matrix.
+                try:
+                    serv.record_puppet_send(network_name, channel_name, sender_nick, body)
+                except Exception:
+                    pass
+                return underlying(target, body, *args, **kwargs)
+
+            func = _recording_send
             prefix = None
         elif (
             "draft/relaymsg" in self.network.caps_enabled

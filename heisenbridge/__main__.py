@@ -104,6 +104,38 @@ class BridgeAppService(AppService):
                 return True
         return False
 
+    PUPPET_ECHO_TTL = 30.0
+
+    def record_puppet_send(self, network: str, channel: str, nick: str, body: str) -> None:
+        """Record that we just sent `body` to `channel` on `network` as `nick`
+        via a user's puppet IRC connection. Used to suppress the duplicate
+        Matrix re-post that would otherwise occur when the plumbed-room IRC
+        connection receives the echo of this message."""
+        import time as _time
+
+        now = _time.monotonic()
+        key = (network.lower(), channel.lower(), nick.lower(), body)
+        # opportunistic GC of expired entries
+        cutoff = now - self.PUPPET_ECHO_TTL
+        stale = [k for k, t in self._recent_puppet_sends.items() if t < cutoff]
+        for k in stale:
+            self._recent_puppet_sends.pop(k, None)
+        self._recent_puppet_sends[key] = now
+
+    def consume_puppet_echo(self, network: str, channel: str, nick: str, body: str) -> bool:
+        """If a recent puppet send matches (network, channel, nick, body),
+        remove it from the cache and return True so the caller can skip the
+        duplicate Matrix re-post. Otherwise return False."""
+        import time as _time
+
+        key = (network.lower(), channel.lower(), nick.lower(), body)
+        ts = self._recent_puppet_sends.pop(key, None)
+        if ts is None:
+            return False
+        if _time.monotonic() - ts > self.PUPPET_ECHO_TTL:
+            return False
+        return True
+
     def get_claimed_nick(self, network: str, user_id: str) -> Optional[str]:
         """Return the IRC nick that `user_id` has claimed on `network` via
         MATRIXTOKEN, or None if no claim is registered."""
@@ -701,6 +733,7 @@ class BridgeAppService(AppService):
         self._users = {}
         self._user_tokens = {}
         self._user_apis = {}
+        self._recent_puppet_sends = {}
         self.config = {
             "networks": {},
             "owner": None,
