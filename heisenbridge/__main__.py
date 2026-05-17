@@ -15,6 +15,7 @@ import urllib
 from fnmatch import fnmatch
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 from aiohttp import web
@@ -62,8 +63,45 @@ class BridgeAppService(AppService):
     _api: HTTPAPI
     _rooms: Dict[str, Room]
     _users: Dict[str, str]
+    _user_tokens: Dict[Tuple[str, str], Tuple[str, str]]
 
     DEFAULT_MEDIA_PATH = "/_heisenbridge/media/{server}/{media_id}/{checksum}{filename}"
+
+    # custom Matrix event content field used to mark events that the bridge
+    # synthesized on behalf of a Matrix user using their access token. The
+    # bridge skips these in on_mx_message to avoid relaying them back to IRC.
+    SYNTHETIC_KEY = "net.heisenbridge.synthetic"
+
+    def set_user_token(self, network: str, nick: str, user_id: str, token: str) -> None:
+        """Register that Matrix user `user_id` has claimed IRC nickname `nick`
+        on `network`, providing `token` for double-puppet attribution."""
+        self._user_tokens[(network.lower(), nick.lower())] = (user_id, token)
+
+    def clear_user_token(self, network: str, nick: str) -> None:
+        self._user_tokens.pop((network.lower(), nick.lower()), None)
+
+    def get_user_token(self, network: str, nick: str) -> Optional[Tuple[str, str]]:
+        return self._user_tokens.get((network.lower(), nick.lower()))
+
+    async def send_as_user(self, room_id: str, user_id: str, token: str, content: dict) -> None:
+        """Send a Matrix message event to `room_id` as `user_id` using their
+        access token. The content is augmented with SYNTHETIC_KEY so the bridge
+        does not relay it back to IRC."""
+        import time as _time
+        import random as _random
+
+        content = {**content, self.SYNTHETIC_KEY: True}
+        txn_id = f"hbdp{int(_time.time() * 1000)}{_random.randint(0, 999999):06d}"
+        api = HTTPAPI(base_url=self.az.intent.api.base_url, token=token)
+        try:
+            await api.request(
+                Method.PUT,
+                Path.v3.rooms[room_id].send["m.room.message"][txn_id],
+                content,
+            )
+        except Exception as e:
+            logging.warning(f"send_as_user failed for {user_id} in {room_id}: {e}")
+            raise
 
     async def push_bridge_state(
         self,
@@ -628,6 +666,7 @@ class BridgeAppService(AppService):
 
         self._rooms = {}
         self._users = {}
+        self._user_tokens = {}
         self.config = {
             "networks": {},
             "owner": None,

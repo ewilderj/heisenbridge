@@ -21,6 +21,9 @@ import irc.client
 import irc.client_aio
 import irc.connection
 from jaraco.stream import buffer
+from mautrix.api import HTTPAPI
+from mautrix.api import Method
+from mautrix.api import Path
 from mautrix.util.bridge_state import BridgeStateEvent
 from python_socks.async_.asyncio import Proxy
 
@@ -130,6 +133,7 @@ class NetworkRoom(Room):
         self.username = None
         self.ircname = None
         self.password = None
+        self.matrix_token = None
         self.sasl_mechanism = None
         self.sasl_username = None
         self.sasl_password = None
@@ -232,6 +236,24 @@ class NetworkRoom(Room):
         cmd.add_argument("--password", help="SASL password")
         cmd.add_argument("--remove", action="store_true", help="remove stored credentials")
         self.commands.register(cmd, self.cmd_sasl)
+
+        cmd = CommandParser(
+            prog="MATRIXTOKEN",
+            description="set a Matrix access token for double-puppet attribution",
+            epilog=(
+                "When set, messages you send from a native IRC client (using the same nickname this network is connected as)\n"
+                "will be posted into plumbed Matrix rooms as YOUR Matrix user (via this access token) instead of as the\n"
+                "IRC puppet user.\n"
+                "\n"
+                "How to obtain a token (Element Web): Settings -> Help & About -> Advanced -> Access Token. Treat this token\n"
+                "like a password; anyone with it can act as you on Matrix. Use --remove to forget the stored token.\n"
+                "\n"
+                "Note: Bridge administrators can trivially see the stored token if they want to.\n"
+            ),
+        )
+        cmd.add_argument("token", nargs="?", help="Matrix access token for your user")
+        cmd.add_argument("--remove", action="store_true", help="remove stored token")
+        self.commands.register(cmd, self.cmd_matrixtoken)
 
         cmd = CommandParser(
             prog="CERTFP",
@@ -551,6 +573,13 @@ class NetworkRoom(Room):
         if "password" in config:
             self.password = config["password"]
 
+        if "matrix_token" in config:
+            self.matrix_token = config["matrix_token"]
+            # rebuild bridge-level claim registry for this nick
+            claim_nick = self.sasl_username or self.nick
+            if self.matrix_token and claim_nick and self.name:
+                self.serv.set_user_token(self.name, claim_nick, self.user_id, self.matrix_token)
+
         if "sasl_mechanism" in config:
             self.sasl_mechanism = config["sasl_mechanism"]
 
@@ -601,6 +630,7 @@ class NetworkRoom(Room):
             "username": self.username,
             "ircname": self.ircname,
             "password": self.password,
+            "matrix_token": self.matrix_token,
             "sasl_mechanism": self.sasl_mechanism,
             "sasl_username": self.sasl_username,
             "sasl_password": self.sasl_password,
@@ -959,6 +989,58 @@ class NetworkRoom(Room):
 
         await self.save()
         self.send_notice("SASL credentials updated.")
+
+    async def cmd_matrixtoken(self, args) -> None:
+        # claim_nick is the IRC nickname this token is associated with
+        claim_nick = self.sasl_username or self.nick
+
+        if args.remove:
+            if claim_nick:
+                self.serv.clear_user_token(self.name, claim_nick)
+            self.matrix_token = None
+            await self.save()
+            self.send_notice("Matrix access token removed.")
+            return
+
+        if args.token is None:
+            if self.matrix_token:
+                self.send_notice(
+                    f"A Matrix access token is stored for {self.user_id} (claimed nick: {claim_nick})."
+                )
+            else:
+                self.send_notice("No Matrix access token is stored.")
+            self.send_notice("Use 'MATRIXTOKEN <token>' to set, or 'MATRIXTOKEN --remove' to clear.")
+            return
+
+        if not claim_nick:
+            self.send_notice(
+                "Refusing to store a Matrix token: set NICK (and ideally SASL credentials) first so we know"
+                " which IRC nickname to attribute to your Matrix user."
+            )
+            return
+
+        # quick sanity check: verify the token is valid and belongs to us
+        try:
+            api = HTTPAPI(base_url=self.serv.az.intent.api.base_url, token=args.token)
+            whoami = await api.request(Method.GET, Path.v3.account.whoami)
+            token_user = whoami.get("user_id")
+        except Exception as e:
+            self.send_notice(f"Failed to validate token: {e}")
+            return
+
+        if token_user != self.user_id:
+            self.send_notice(
+                f"Refusing to store token: it belongs to {token_user}, not to you ({self.user_id})."
+            )
+            return
+
+        self.matrix_token = args.token
+        self.serv.set_user_token(self.name, claim_nick, self.user_id, args.token)
+        await self.save()
+        self.send_notice(
+            f"Matrix access token stored. Messages from IRC nick '{claim_nick}' on '{self.name}' will be"
+            f" posted in plumbed rooms as {self.user_id}."
+        )
 
     async def cmd_certfp(self, args) -> None:
         if args.remove:

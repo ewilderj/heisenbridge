@@ -212,6 +212,14 @@ class PlumbedRoom(ChannelRoom):
         if name.startswith("@" + self.serv.puppet_prefix) and server == self.serv.server_name:
             return
 
+        # skip messages the bridge synthesized via a user's access token
+        # (already relayed from IRC under double-puppet attribution)
+        try:
+            if event.content.get(self.serv.SYNTHETIC_KEY):
+                return
+        except Exception:
+            pass
+
         # add ZWSP to sender to avoid pinging on IRC
         if self.use_zwsp:
             sender = f"{name[:2]}\u200B{name[2:]}:{server[:1]}\u200B{server[1:]}"

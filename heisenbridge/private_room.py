@@ -601,6 +601,22 @@ class PrivateRoom(Room):
                 if tag["key"] == "draft/relaymsg" and tag["value"] == self.network.conn.real_nickname:
                     return
 
+        # double-puppet attribution: in plumbed rooms, if the IRC sender's nick
+        # has been claimed by a Matrix user via MATRIXTOKEN, post the message
+        # as that Matrix user instead of as the IRC puppet.
+        if getattr(self, "force_forward", False):
+            claim = self.serv.get_user_token(self.network.name, event.source.nick)
+            if claim is not None:
+                claim_user_id, claim_token = claim
+                content = {"msgtype": "m.text", "body": plain}
+                if formatted:
+                    content["format"] = "org.matrix.custom.html"
+                    content["formatted_body"] = formatted
+                asyncio.ensure_future(
+                    self.serv.send_as_user(self.id, claim_user_id, claim_token, content)
+                )
+                return
+
         if event.source.nick == self.network.conn.real_nickname:
             source_irc_user_id = self.serv.irc_user_id(self.network.name, event.source.nick)
 
