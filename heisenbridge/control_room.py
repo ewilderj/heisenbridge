@@ -216,6 +216,24 @@ class ControlRoom(Room):
             cmd.add_argument("--remove", help="remove path override", action="store_true")
             self.commands.register(cmd, self.cmd_media_path)
 
+            cmd = CommandParser(
+                prog="MEDIAMODE",
+                description="how to render Matrix media (images/files/audio/video) on IRC",
+                epilog=(
+                    "auto: URL if media_url is configured, else a description. "
+                    "description: always a short description (filename, size, dimensions, duration), "
+                    "even if media_url is configured. Use this to avoid leaking media URLs to IRC. "
+                    "url: always the URL (legacy)."
+                ),
+            )
+            cmd.add_argument(
+                "mode",
+                nargs="?",
+                choices=["auto", "description", "url"],
+                help="new mode (omit to show current)",
+            )
+            self.commands.register(cmd, self.cmd_media_mode)
+
             cmd = CommandParser(prog="VERSION", description="show bridge version")
             self.commands.register(cmd, self.cmd_version)
 
@@ -596,6 +614,16 @@ class ControlRoom(Room):
 
         self.send_notice(f"Media Path override is set to {self.serv.config['media_path']}")
         self.send_notice(f"Current active media path: {self.serv.media_path}")
+
+    async def cmd_media_mode(self, args):
+        if args.mode:
+            self.serv.config["media_mode"] = args.mode
+            await self.serv.save()
+        mode = self.serv.config.get("media_mode", "auto")
+        self.send_notice(f"Media mode is set to {mode}")
+        if mode == "auto":
+            effective = "url" if self.serv.media_endpoint else "description"
+            self.send_notice(f"Effective behavior: {effective} (media_url={'set' if self.serv.media_endpoint else 'unset'})")
 
     async def cmd_maxlines(self, args):
         if args.lines is not None:

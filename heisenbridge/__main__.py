@@ -492,6 +492,61 @@ class BridgeAppService(AppService):
                 logging.exception("Failed to fetch media")
                 return web.Response(status=502, text="Failed to fetch media")
 
+    def media_description(self, content) -> str:
+        """Return a short human-readable description for a media event
+        (image/file/audio/video) when no public media URL is configured.
+
+        Format examples:
+          \U0001F4F7 photo.png (1.2 MB, 800\u00d7600)
+          \U0001F39E\ufe0f clip.mp4 (5.4 MB, 1080p, 30s)
+          \U0001F3B5 song.mp3 (3.2 MB, 2m45s)
+          \U0001F4CE document.pdf (524 KB)
+        """
+        msgtype = str(getattr(content, "msgtype", "") or "")
+        icon = {
+            "m.image": "\U0001F4F7",
+            "m.video": "\U0001F39E\ufe0f",
+            "m.audio": "\U0001F3B5",
+            "m.file": "\U0001F4CE",
+        }.get(msgtype, "\U0001F4CE")
+
+        name = getattr(content, "filename", None) or getattr(content, "body", None) or "file"
+
+        info = getattr(content, "info", None) or {}
+        if hasattr(info, "serialize"):
+            info = info.serialize()
+        elif not isinstance(info, dict):
+            try:
+                info = dict(info)
+            except Exception:
+                info = {}
+
+        bits = []
+
+        size = info.get("size")
+        if isinstance(size, (int, float)) and size > 0:
+            for unit in ("B", "KB", "MB", "GB"):
+                if size < 1024 or unit == "GB":
+                    bits.append(f"{size:.1f} {unit}".replace(".0 ", " "))
+                    break
+                size /= 1024.0
+
+        w, h = info.get("w"), info.get("h")
+        if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
+            if msgtype == "m.video":
+                bits.append(f"{h}p")
+            else:
+                bits.append(f"{w}\u00d7{h}")
+
+        dur_ms = info.get("duration")
+        if isinstance(dur_ms, (int, float)) and dur_ms > 0:
+            secs = int(dur_ms / 1000)
+            mins, secs = divmod(secs, 60)
+            bits.append(f"{mins}m{secs:02d}s" if mins else f"{secs}s")
+
+        suffix = f" ({', '.join(bits)})" if bits else ""
+        return f"{icon} {name}{suffix}"
+
     def mxc_to_url(self, mxc: str, filename=None):
         if not self.media_endpoint:
             return "<media unavailable>"
@@ -510,6 +565,34 @@ class BridgeAppService(AppService):
         )
 
         return urllib.parse.urljoin(self.media_endpoint, media_path)
+
+    def media_event_body(self, content) -> str:
+        """Render the IRC body for a media event.
+
+        Controlled by ``config['media_mode']``:
+          - ``"auto"`` (default): use the public media URL if configured,
+            otherwise fall back to a short descriptive summary.
+          - ``"description"``: always emit the descriptive summary (icon,
+            filename, size, dimensions, duration). Useful when you want to
+            avoid leaking media URLs to IRC even when ``media_url`` is set.
+          - ``"url"``: always emit the URL (or ``<media unavailable>`` if
+            ``media_url`` is not configured). Pre-1.16 legacy behavior.
+        """
+        mode = self.config.get("media_mode", "auto")
+        use_url = (mode == "url") or (mode == "auto" and self.media_endpoint)
+
+        if use_url:
+            filename = getattr(content, "filename", None) or getattr(content, "body", None)
+            url = self.mxc_to_url(content.url, filename)
+            extra = getattr(content, "body", None)
+            if (
+                getattr(content, "filename", None)
+                and extra
+                and extra != content.filename
+            ):
+                return f"{url}\n{extra}"
+            return url
+        return self.media_description(content)
 
     async def reset(self, config_file, homeserver_url):
         with open(config_file) as f:
@@ -752,6 +835,7 @@ class BridgeAppService(AppService):
             "use_pastebin": False,
             "use_reacts": True,
             "media_url": None,
+            "media_mode": "auto",
             "media_path": None,
             "media_key": None,
             "namespace": self.puppet_prefix,

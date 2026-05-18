@@ -254,10 +254,7 @@ class PlumbedRoom(ChannelRoom):
 
         if event.content.msgtype.is_media:
             # process media event like it was a text message
-            if event.content.filename and event.content.filename != event.content.body:
-                new_body = self.serv.mxc_to_url(event.content.url, event.content.filename) + "\n" + event.content.body
-            else:
-                new_body = self.serv.mxc_to_url(event.content.url, event.content.body)
+            new_body = self.serv.media_event_body(event.content)
             media_event = MessageEvent(
                 sender=event.sender,
                 type=None,
