@@ -622,8 +622,9 @@ class ControlRoom(Room):
         mode = self.serv.config.get("media_mode", "auto")
         self.send_notice(f"Media mode is set to {mode}")
         if mode == "auto":
-            effective = "url" if self.serv.media_endpoint else "description"
-            self.send_notice(f"Effective behavior: {effective} (media_url={'set' if self.serv.media_endpoint else 'unset'})")
+            endpoint = getattr(self.serv, "media_endpoint", None)
+            effective = "url" if endpoint else "description"
+            self.send_notice(f"Effective behavior: {effective} (media_url={'set' if endpoint else 'unset'})")
 
     async def cmd_maxlines(self, args):
         if args.lines is not None:

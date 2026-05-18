@@ -548,7 +548,7 @@ class BridgeAppService(AppService):
         return f"{icon} {name}{suffix}"
 
     def mxc_to_url(self, mxc: str, filename=None):
-        if not self.media_endpoint:
+        if not getattr(self, "media_endpoint", None):
             return "<media unavailable>"
         try:
             server, media_id = self.api.parse_mxc_uri(mxc)
@@ -579,7 +579,8 @@ class BridgeAppService(AppService):
             ``media_url`` is not configured). Pre-1.16 legacy behavior.
         """
         mode = self.config.get("media_mode", "auto")
-        use_url = (mode == "url") or (mode == "auto" and self.media_endpoint)
+        endpoint = getattr(self, "media_endpoint", None)
+        use_url = (mode == "url") or (mode == "auto" and endpoint)
 
         if use_url:
             filename = getattr(content, "filename", None) or getattr(content, "body", None)
@@ -862,6 +863,7 @@ class BridgeAppService(AppService):
             self.media_key = self.registration["hs_token"].encode("utf-8")
 
         # use configured media_url for endpoint if we have it
+        self.media_endpoint = None
         if "heisenbridge" in self.registration and "media_url" in self.registration["heisenbridge"]:
             logging.debug(
                 f"Overriding media URL from registration file to {self.registration['heisenbridge']['media_url']}"
